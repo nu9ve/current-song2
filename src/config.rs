@@ -187,6 +187,23 @@ cfg_macos! {
             }
         }
     }
+    
+    #[derive(Deserialize, Serialize, Debug, Clone)]
+    #[serde(default)]
+    pub struct BrowserMacOsConfig {
+        #[serde(default = "bool_true")]
+        pub enabled: bool,
+        pub browsers: Vec<String>,
+    }
+
+    impl Default for BrowserMacOsConfig {
+        fn default() -> Self {
+            Self {
+                enabled: true,
+                browsers: vec!["Brave Browser".to_owned(), "Google Chrome".to_owned(), "Safari".to_owned()],
+            }
+        }
+    }
 }
 
 /// Configuración de los módulos
@@ -199,6 +216,8 @@ pub struct ModuleConfig {
     pub dbus: DbusConfig,
     #[cfg(target_os = "macos")]
     pub macos: MacOsConfig,
+    #[cfg(target_os = "macos")]
+    pub browser_macos: BrowserMacOsConfig,
     pub file: FileOutputConfig,
 }
 
@@ -211,6 +230,8 @@ impl Default for ModuleConfig {
             dbus: DbusConfig::default(),
             #[cfg(target_os = "macos")]
             macos: MacOsConfig::default(),
+            #[cfg(target_os = "macos")]
+            browser_macos: BrowserMacOsConfig::default(),
             file: FileOutputConfig::default(),
         }
     }

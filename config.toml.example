@@ -10,6 +10,18 @@ mode = "Include"
 # this is case-sensitive
 items = ["Spotify.exe"]
 
+[modules.macos]
+# configuración para macOS
+# valor predeterminado es true
+enabled = true
+players = ["Spotify", "Music"]
+
+[modules.browser_macos]
+# configuración para navegadores en macOS
+# valor predeterminado es true
+enabled = true
+browsers = ["Brave Browser", "Google Chrome", "Safari"]
+
 [server]
 # this is the default
 port = 48457

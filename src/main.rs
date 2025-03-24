@@ -92,6 +92,18 @@ async fn init_macos_actors(
         
         workers::macos::start_spawning(
             modules.macos.clone(),
+            image_store.clone(),
+            manager.clone(),
+            module_id,
+        ).await;
+    }
+    
+    // Iniciar módulo de navegadores
+    if modules.browser_macos.enabled {
+        let module_id = manager.send(actors::manager::CreateModule { priority: 1 }).await.unwrap();
+        
+        workers::browser_macos::start_spawning(
+            modules.browser_macos.clone(),
             image_store,
             manager,
             module_id,

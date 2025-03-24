@@ -1,0 +1,4 @@
+[modules.macos]
+enabled = true
+players = ["Spotify", "Music"]
+
