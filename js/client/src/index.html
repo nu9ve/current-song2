@@ -5,6 +5,19 @@
     <title>Current Song</title>
     <link rel="stylesheet" href="index.css" />
     <link rel="stylesheet" href="theme.css" />
+    <script>
+      // Aplicar tema antes de que cargue la página
+      (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const theme = urlParams.get('theme');
+        if (theme === 'computer') {
+          document.documentElement.setAttribute('data-theme', 'computer');
+          document.documentElement.classList.add('theme-computer');
+        } else {
+          document.documentElement.setAttribute('data-theme', 'default');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="song-container" class="vanish">
@@ -12,6 +25,7 @@
       <div id="song-info">
         <h1 id="title"></h1>
         <h2 id="subtitle"></h2>
+        <div id="provider"></div>
       </div>
       <div id="progress" class="hidden"></div>
     </div>

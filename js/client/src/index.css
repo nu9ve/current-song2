@@ -1,4 +1,5 @@
 @import url(./position.css);
+@import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=VT323&family=Share+Tech+Mono&display=swap');
 
 :root {
   --theme-color: #c7cedb;
@@ -8,9 +9,9 @@
 
   --rounded: 10px;
   --max-width: 30rem;
-  --height: 4.4rem;
-  --max-height: 4.4rem;
-  --min-height: 3rem;
+  --height: 6rem;
+  --max-height: 6rem;
+  --min-height: 4rem;
 
   --container-shadow: 0 2px 22px 0 var(--shadow-color);
 
@@ -23,6 +24,28 @@
   --marquee-speed: 0.2;
   --marquee-pause-duration: 1200;
   --marquee-repeat-pause-duration: 5000;
+}
+
+/* Tema computer */
+html[data-theme='computer'], 
+html.theme-computer {
+  --theme-color: #000;
+  --text-color: #33ff66;
+  --font: 'Share Tech Mono', 'VT323', monospace;
+  --shadow-color: #33ff6633;
+
+  --rounded: 0;
+  --max-width: 30rem;
+  --height: 6rem;
+  --max-height: 6rem;
+  --min-height: 4rem;
+
+  --container-shadow: 0 0 10px 0 #33ff66aa;
+
+  --progress-height: 0.4rem;
+  --progress-color: #33ff66;
+  --progress-border-radius: 0;
+  --progress-shadow: 0 0 5px 0 #33ff66;
 }
 
 * {
@@ -50,6 +73,38 @@ body {
   transform-origin: left;
   box-shadow: var(--container-shadow);
   transform: translate(var(--translate-x, 0), var(--translate-y, 0));
+}
+
+/* Efecto de glitch para el tema computer */
+html[data-theme='computer'] #song-container,
+html.theme-computer #song-container {
+  border: 1px solid var(--text-color);
+  position: relative;
+}
+
+html[data-theme='computer'] #song-container::before,
+html.theme-computer #song-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(rgba(51, 255, 102, 0.1), transparent 3px, transparent 9px, rgba(51, 255, 102, 0.1) 10px);
+  background-size: 100% 10px;
+  pointer-events: none;
+  z-index: 10;
+  opacity: 0.2;
+}
+
+html[data-theme='computer'] h1,
+html[data-theme='computer'] h2,
+html[data-theme='computer'] #provider,
+html.theme-computer h1,
+html.theme-computer h2,
+html.theme-computer #provider {
+  text-shadow: 0 0 5px var(--text-color);
+  letter-spacing: 1px;
 }
 
 #song-container.with-image {
@@ -85,6 +140,105 @@ h2 {
   font-weight: normal;
 }
 
+#provider {
+  font-family: var(--font);
+  color: var(--text-color);
+  font-size: small;
+  margin-top: 0.4rem;
+  background-color: rgba(0, 0, 0, 0.1);
+  display: inline-block !important;
+  padding: 0.15rem 0.6rem;
+  border-radius: 3px;
+  font-weight: 600;
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: block !important;
+  max-width: fit-content;
+  transition: all 0.3s ease;
+  min-height: 1.5rem;
+  min-width: 4rem;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* Estilos para provider en el tema computer */
+html[data-theme='computer'] #provider,
+html.theme-computer #provider {
+  background-color: transparent;
+  border: 1px solid var(--text-color);
+  border-radius: 0;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+#provider:empty {
+  background-color: rgba(255, 0, 0, 0.2);
+  color: #FF0000;
+}
+
+#provider:empty:before {
+  content: 'Reproductor';
+  opacity: 0.8;
+}
+
+/* Estilos de proveedores para el tema default */
+html:not([data-theme='computer']) #provider.spotify {
+  background-color: rgba(30, 215, 96, 0.2);
+  color: #1DB954;
+}
+
+html:not([data-theme='computer']) #provider.apple-music {
+  background-color: rgba(252, 63, 85, 0.2);
+  color: #FC3F55;
+}
+
+html:not([data-theme='computer']) #provider.youtube {
+  background-color: rgba(255, 0, 0, 0.2);
+  color: #FF0000;
+}
+
+html:not([data-theme='computer']) #provider.soundcloud {
+  background-color: rgba(255, 85, 0, 0.2);
+  color: #FF5500;
+}
+
+html:not([data-theme='computer']) #provider.tidal {
+  background-color: rgba(0, 0, 0, 0.2);
+  color: #000000;
+}
+
+html:not([data-theme='computer']) #provider.deezer {
+  background-color: rgba(0, 160, 220, 0.2);
+  color: #00A0DC;
+}
+
+html:not([data-theme='computer']) #provider.pandora {
+  background-color: rgba(55, 106, 243, 0.2);
+  color: #376AF3;
+}
+
+html:not([data-theme='computer']) #provider.amazon-music {
+  background-color: rgba(37, 153, 236, 0.2);
+  color: #2599EC;
+}
+
+html:not([data-theme='computer']) #provider.audible {
+  background-color: rgba(240, 132, 0, 0.2);
+  color: #F08400;
+}
+
+html:not([data-theme='computer']) #provider.vlc {
+  background-color: rgba(255, 165, 0, 0.2);
+  color: #ff8800;
+}
+
+/* Estilos de proveedores para el tema computer (todos usan el mismo color) */
+html[data-theme='computer'] #provider,
+html.theme-computer #provider {
+  background-color: transparent;
+  color: var(--text-color);
+}
+
 #progress {
   position: absolute;
   bottom: 0;
@@ -97,6 +251,14 @@ h2 {
   border-radius: var(--progress-border-radius);
   box-shadow: var(--progress-shadow);
   transition: left 100ms;
+}
+
+/* Estilos de imagen para el tema computer */
+html[data-theme='computer'] #image-container,
+html.theme-computer #image-container {
+  filter: grayscale(0.3) sepia(0.2) hue-rotate(60deg);
+  border: 1px solid var(--text-color);
+  box-shadow: 0 0 10px 0 var(--text-color);
 }
 
 #image-container {
@@ -118,6 +280,36 @@ h2 {
   to {
     transform: translate(var(--translate-x, 0), var(--translate-y, 0)) scale(var(--full-scale, 1));
   }
+}
+
+/* Animación de glitch para tema computer */
+@keyframes glitch {
+  0% {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-2px, 2px);
+  }
+  40% {
+    transform: translate(-2px, -2px);
+  }
+  60% {
+    transform: translate(2px, 2px);
+  }
+  80% {
+    transform: translate(2px, -2px);
+  }
+  100% {
+    transform: translate(0);
+  }
+}
+
+html[data-theme='computer'] h1:hover,
+html[data-theme='computer'] h2:hover,
+html.theme-computer h1:hover,
+html.theme-computer h2:hover {
+  animation: glitch 0.2s ease-in-out infinite;
+  cursor: crosshair;
 }
 
 img {

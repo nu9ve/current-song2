@@ -619,16 +619,8 @@ EOF"
                     let file_path = output.trim_start_matches("TEMP_FILE:");
                     match std::fs::read(file_path) {
                         Ok(data) if !data.is_empty() => {
-                            info!("Portada obtenida de Music para {} - {}: {} bytes", 
+                            debug!("Portada obtenida de Music para {} - {}: {} bytes", 
                                 state.title, state.artist, data.len());
-                            
-                            // Dump de los primeros bytes para diagnóstico
-                            let hex_dump = data.iter().take(32)
-                                .map(|b| format!("{:02X}", b))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            
-                            info!("Primeros 32 bytes de la imagen: {}", hex_dump);
                             
                             // Verificar que hay suficientes datos para hacer las comprobaciones de cabecera
                             if data.len() < 4 {
@@ -637,16 +629,16 @@ EOF"
                             }
                             // Asegurarnos de que es una imagen JPEG válida
                             else if data[0] == 0xFF && data[1] == 0xD8 {
-                                info!("Portada válida JPEG detectada: {} bytes", data.len());
+                                debug!("Portada válida JPEG detectada: {} bytes", data.len());
                                 Some(data)
                             } 
                             // O un PNG válido
                             else if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-                                info!("Portada válida PNG detectada: {} bytes", data.len());
+                                debug!("Portada válida PNG detectada: {} bytes", data.len());
                                 Some(data)
                             }
                             else {
-                                warn!("Datos de imagen en formato incorrecto de Music. Primeros bytes: {}", hex_dump);
+                                warn!("Datos de imagen en formato incorrecto de Music");
                                 None
                             }
                         },
@@ -750,7 +742,7 @@ EOF"
                     debug!("No se pudo obtener la portada de Spotify (limitación de API)");
                     None
                 } else {
-                    info!("Portada obtenida de Spotify para {} - {}: {} bytes", 
+                    debug!("Portada obtenida de Spotify para {} - {}: {} bytes", 
                          state.title, state.artist, output.len());
                     Some(output.into_bytes())
                 }

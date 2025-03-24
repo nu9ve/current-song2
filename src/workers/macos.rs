@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use actix::Addr;
 use macos_media::player::{self, State};
 use tokio::task::JoinHandle;
+use tokio::time::{self, Instant};
 use tracing::{debug, info, warn};
 
 use crate::actors::manager::{Manager, UpdateModule};
@@ -19,6 +20,7 @@ pub struct MacOsWorker {
     image_store: Arc<RwLock<ImageStore>>,
     image_id: SlotRef,
     current_track_id: Arc<Mutex<Option<String>>>,
+    last_log_time: Arc<Mutex<Instant>>,
 }
 
 pub async fn start_spawning(
@@ -40,6 +42,7 @@ pub async fn start_spawning(
         image_store,
         image_id,
         current_track_id: Arc::new(Mutex::new(None)),
+        last_log_time: Arc::new(Mutex::new(Instant::now() - time::Duration::from_secs(30))),
     };
     
     // Crear un canal para recibir actualizaciones de estado
@@ -98,6 +101,9 @@ impl MacOsWorker {
     }
     
     fn make_state(&self, state: player::State) -> ModuleState {
+        // Verificar si es momento de imprimir el log periódico (cada 30 segundos)
+        self.check_periodic_log(&state);
+        
         let play_info = PlayInfo {
             title: state.title.clone(),
             artist: state.artist.clone(),
@@ -176,18 +182,20 @@ impl MacOsWorker {
                          artwork_data[2] == 0x4E && artwork_data[3] == 0x47)
                     );
                 
-                // Imprimir los primeros bytes para diagnóstico
-                let hex_dump = artwork_data.iter().take(32)
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                
-                info!("Datos de imagen recibidos para {} - {}: {} bytes. Primeros bytes: {}", 
-                     play_info.title, play_info.artist, artwork_data.len(), hex_dump);
+                // Reducir logs excesivos - solo mostrar primeros bytes en debug
+                if debug_enabled() {
+                    let hex_dump = artwork_data.iter().take(8)
+                        .map(|b| format!("{:02X}", b))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    
+                    debug!("Datos de imagen recibidos: {} bytes. Primeros bytes: {}", 
+                         artwork_data.len(), hex_dump);
+                }
                 
                 if !is_valid_image {
-                    warn!("Los datos recibidos no parecen ser una imagen válida ({} bytes). Primeros bytes: {}", 
-                         artwork_data.len(), hex_dump);
+                    warn!("Los datos recibidos no parecen ser una imagen válida ({} bytes)", 
+                         artwork_data.len());
                     
                     // Retornar sin la imagen
                     return ModuleState::Playing(play_info);
@@ -195,76 +203,114 @@ impl MacOsWorker {
                 
                 // Determinar el tipo de contenido basado en los datos
                 let content_type = if artwork_data[0] == 0xFF && artwork_data[1] == 0xD8 {
-                    info!("Formato JPEG detectado para la imagen");
+                    debug!("Formato JPEG detectado");
                     "image/jpeg".to_string()
                 } else if artwork_data[0] == 0x89 && artwork_data[1] == 0x50 && 
                           artwork_data[2] == 0x4E && artwork_data[3] == 0x47 {
-                    info!("Formato PNG detectado para la imagen");
+                    debug!("Formato PNG detectado");
                     "image/png".to_string()
                 } else {
                     warn!("Formato no reconocido, asumiendo JPEG");
                     "image/jpeg".to_string() // Por defecto asumimos JPEG
                 };
                 
-                // Verificamos si ya tenemos esta imagen almacenada para evitar duplicados
-                let (should_store, current_epoch) = {
+                // SOLUCIÓN: Siempre almacenar una nueva imagen si es una nueva canción para evitar el problema de caché
+                let epoch = if is_new_track {
+                    // Para una nueva canción, siempre almacenamos una nueva imagen
+                    if let Ok(mut store) = self.image_store.write() {
+                        debug!("Almacenando nueva imagen para nueva canción");
+                        let epoch = store.store(*self.image_id, content_type, artwork_data);
+                        debug!("Nueva portada almacenada (id={}, epoch={})", *self.image_id, epoch);
+                        epoch
+                    } else {
+                        warn!("No se pudo escribir en el almacén de imágenes");
+                        0 // Valor por defecto si hay error
+                    }
+                } else {
+                    // Verificar si ya tenemos esta imagen almacenada
                     if let Ok(store) = self.image_store.read() {
-                        if let Some((epoch, img)) = store.get_latest(*self.image_id) {
-                            // Si ya existe una imagen, solo la reemplazamos si:
-                            // 1. Es una nueva canción
-                            // 2. O si los datos son diferentes (verificando longitud)
-                            let size_matches = img.data.len() == artwork_data.len();
-                            (!size_matches || is_new_track, Some(epoch))
+                        if let Some((epoch, _)) = store.get_latest(*self.image_id) {
+                            // Reutilizar la imagen existente
+                            debug!("Reutilizando portada existente (id={}, epoch={})", *self.image_id, epoch);
+                            epoch
                         } else {
                             // No hay imagen previa
-                            (true, None)
+                            if let Ok(mut store) = self.image_store.write() {
+                                let epoch = store.store(*self.image_id, content_type, artwork_data);
+                                debug!("Almacenando primera imagen (id={}, epoch={})", *self.image_id, epoch);
+                                epoch
+                            } else {
+                                0
+                            }
                         }
                     } else {
-                        // Error leyendo el almacén, almacenamos por seguridad
-                        (true, None)
+                        warn!("No se pudo leer el almacén de imágenes");
+                        0
                     }
                 };
                 
-                // Almacenar imagen y obtener época
-                let epoch = if should_store {
-                    let epoch = {
-                        if let Ok(mut store) = self.image_store.write() {
-                            info!("Almacenando nueva imagen de tipo {} ({} bytes)", 
-                                 content_type, artwork_data.len());
-                            let epoch = store.store(*self.image_id, content_type, artwork_data);
-                            info!("Nueva portada almacenada para {} - {} (id={}, epoch={})", 
-                                 play_info.title, play_info.artist, *self.image_id, epoch);
-                            epoch
-                        } else {
-                            // Si no podemos escribir en el almacén, usamos la época actual o 0
-                            current_epoch.unwrap_or(0)
-                        }
-                    };
-                    epoch
-                } else if let Some(epoch) = current_epoch {
-                    // Reutilizamos la época existente
-                    debug!("Reutilizando portada existente para {} - {} (id={}, epoch={})", 
-                           play_info.title, play_info.artist, *self.image_id, epoch);
-                    epoch
-                } else {
-                    0
-                };
-                
-                // Añadimos la referencia a la imagen
+                // Asignar la imagen a PlayInfo
                 play_info.image = Some(ImageInfo::Internal(InternalImage {
                     id: *self.image_id,
                     epoch_id: epoch,
                 }));
                 
-                info!("Portada disponible para {} - {} (id={}, epoch={})", 
+                debug!("Portada disponible para {} - {} (id={}, epoch={})", 
                      play_info.title, play_info.artist, *self.image_id, epoch);
-            } else {
-                debug!("Portada vacía para {} - {}", play_info.title, play_info.artist);
             }
-        } else {
-            debug!("Sin portada para {} - {}", play_info.title, play_info.artist);
         }
         
         ModuleState::Playing(play_info)
     }
+    
+    // Función para imprimir un log periódico con el formato solicitado
+    fn check_periodic_log(&self, state: &State) {
+        let now = Instant::now();
+        let should_log = {
+            let mut last_log = self.last_log_time.lock().unwrap();
+            let elapsed = now.duration_since(*last_log);
+            
+            if elapsed >= time::Duration::from_secs(30) {
+                *last_log = now;
+                true
+            } else {
+                false
+            }
+        };
+        
+        if should_log {
+            let current_time = state.timeline.as_ref().map_or("00:00".to_string(), |t| 
+                format!("{:02}:{:02}", 
+                    t.progress.as_secs() / 60, 
+                    t.progress.as_secs() % 60
+                )
+            );
+            
+            let duration = state.timeline.as_ref().map_or("00:00".to_string(), |t| 
+                format!("{:02}:{:02}", 
+                    t.duration.as_secs() / 60, 
+                    t.duration.as_secs() % 60
+                )
+            );
+            
+            let has_image = state.artwork_data.as_ref().map_or(false, |data| !data.is_empty());
+            
+            // Formato: [song title] - [artist name] - [source provider] - ([currenttime]/[duration]) - [is image valid]
+            info!(
+                "{} - {} - {} - ({}/{}) - imagen: {}", 
+                state.title, 
+                state.artist, 
+                state.player_name, 
+                current_time,
+                duration,
+                if has_image { "sí" } else { "no" }
+            );
+        }
+    }
+}
+
+// Función auxiliar para verificar si los logs de nivel debug están habilitados
+#[inline]
+fn debug_enabled() -> bool {
+    cfg!(debug_assertions)
 } 
