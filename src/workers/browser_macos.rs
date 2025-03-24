@@ -244,11 +244,14 @@ pub async fn start_spawning(
 
 impl BrowserMacOsWorker {
     async fn poll_browsers(&self) {
+        // Verificar si Apple Music está reproduciendo algo
+        let is_apple_music_active = self.check_apple_music_active().await;
+        
         // En lugar de mostrar siempre todas las pestañas, solo lo haremos ocasionalmente
         let now = Instant::now();
         let should_list_tabs = {
             let mut last_poll = self.last_poll_time.lock().unwrap();
-            let should_list = now.duration_since(*last_poll) > Duration::from_secs(10);
+            let should_list = now.duration_since(*last_poll) > Duration::from_secs(30); // Aumentar a 30 segundos
             if should_list {
                 // Actualizar la hora del último sondeo completo
                 *last_poll = now;
@@ -256,10 +259,36 @@ impl BrowserMacOsWorker {
             should_list
         }; // El MutexGuard se libera aquí al final del bloque
         
-        // Solo listar todas las pestañas cada cierto tiempo
-        if should_list_tabs {
+        // Solo listar todas las pestañas cada cierto tiempo y cuando no hay Apple Music activo
+        if should_list_tabs && !is_apple_music_active {
             self.list_all_media_tabs().await;
         }
+        
+        // Si Apple Music está activo, pausar la detección del navegador
+        if is_apple_music_active {
+            // Pausar la reproducción del navegador si estaba reproduciendo
+            let was_playing = !self.is_paused.swap(true, std::sync::atomic::Ordering::SeqCst);
+            
+            if was_playing {
+                info!("⏸️ Navegador pausado porque Apple Music está activo");
+                
+                // Limpiar pestaña actual
+                {
+                    let mut current_tab = self.current_tab.lock().unwrap();
+                    *current_tab = None;
+                }
+                
+                // Enviar estado de pausa
+                self.manager.do_send(UpdateModule {
+                    id: self.module_id,
+                    state: ModuleState::Paused,
+                });
+            }
+            
+            return;
+        }
+        
+        // Si llegamos aquí, Apple Music no está activo, continuar con la detección normal
         
         // Detectar pestañas de navegadores con AppleScript
         if let Some(tab) = self.get_active_tab().await {
@@ -267,23 +296,36 @@ impl BrowserMacOsWorker {
             
             // Verificar si la pestaña actual contiene información de música
             if let Some((title, artist, provider)) = tab.get_music_info() {
-                info!("📌 Reproduciendo: {} - {} ({})", title, artist, provider);
+                // Solo mostrar mensaje de reproducción si cambió la canción o si pasó tiempo suficiente
+                let should_log = {
+                    let mut current_tab = self.current_tab.lock().unwrap();
+                    let tab_changed = current_tab.as_ref().map_or(true, |prev_tab| {
+                        prev_tab.title != tab.title || prev_tab.url != tab.url
+                    });
+                    
+                    if tab_changed {
+                        *current_tab = Some(tab.clone());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                
+                if should_log {
+                    info!("📌 Reproduciendo: {} - {} ({})", title, artist, provider);
+                }
                 
                 // Actualizar el estado a reproduciendo
                 self.is_paused.store(false, std::sync::atomic::Ordering::SeqCst);
                 
-                // Actualizar pestaña actual
-                {
-                    let mut current_tab = self.current_tab.lock().unwrap();
-                    *current_tab = Some(tab.clone());
-                }
-                
                 // Crear información de reproducción
                 let play_info = self.create_play_info(title, artist, provider);
                 
-                // Mostrar información para diagnóstico
-                debug!("Enviando al widget: título='{}', artista='{}', origen='{}'", 
-                    play_info.title, play_info.artist, play_info.source);
+                // Solo mostrar información para diagnóstico si realmente es necesario
+                if should_log {
+                    debug!("Enviando al widget: título='{}', artista='{}', origen='{}'", 
+                        play_info.title, play_info.artist, play_info.source);
+                }
                 
                 // Enviar el estado al gestor
                 self.manager.do_send(UpdateModule {
@@ -365,6 +407,8 @@ impl BrowserMacOsWorker {
     }
     
     async fn get_browser_active_tab(&self, browser: &str) -> Option<BrowserTab> {
+        // Ya no necesitamos verificar Apple Music aquí, ya lo hacemos en poll_browsers
+        
         // Primero obtenemos todas las pestañas potenciales de música
         let potential_tabs = self.get_all_media_tabs(browser).await;
         
@@ -799,23 +843,43 @@ impl BrowserMacOsWorker {
 
     // Listar todas las pestañas con posible contenido multimedia de manera más compacta
     async fn list_all_media_tabs(&self) {
-        info!("📋 Pestañas con posible contenido multimedia:");
+        info!("📋 Revisando pestañas con posible contenido multimedia");
         
+        let mut total_tabs = 0;
+        let mut media_tabs_count = 0;
+        
+        // Contamos todas las pestañas y solo mostramos las que tienen contenido de música
         for browser in &self.browsers {
             let tabs = self.get_all_media_tabs(browser).await;
+            total_tabs += tabs.len();
             
             if !tabs.is_empty() {
-                info!("  {} ({} pestañas)", browser, tabs.len());
+                let media_tabs: Vec<&BrowserTab> = tabs.iter()
+                    .filter(|tab| tab.get_music_info().is_some())
+                    .collect();
                 
-                for tab in tabs.iter() {
-                    if let Some((title, artist, _)) = tab.get_music_info() {
-                        info!("  → {} - {} | {}", title, artist, tab.url);
-                    } else {
-                        debug!("  → {} | {}", tab.title, tab.url);
+                media_tabs_count += media_tabs.len();
+                
+                // Solo mostrar el resumen si hay pestañas con contenido musical
+                if !media_tabs.is_empty() {
+                    debug!("  {} ({} pestañas con contenido musical)", browser, media_tabs.len());
+                    
+                    // Mostrar máximo 5 pestañas para no saturar los logs
+                    for tab in media_tabs.iter().take(5) {
+                        if let Some((title, artist, _)) = tab.get_music_info() {
+                            debug!("  → {} - {} | {}", title, artist, tab.url);
+                        }
+                    }
+                    
+                    // Indicar si hay más pestañas
+                    if media_tabs.len() > 5 {
+                        debug!("  → ... y {} más", media_tabs.len() - 5);
                     }
                 }
             }
         }
+        
+        debug!("Total: {} pestañas detectadas, {} con contenido musical", total_tabs, media_tabs_count);
     }
     
     // Obtener todas las pestañas con posible contenido multimedia en un navegador
@@ -913,5 +977,48 @@ impl BrowserMacOsWorker {
         }
         
         tabs
+    }
+
+    // Función para verificar si Apple Music está activo
+    async fn check_apple_music_active(&self) -> bool {
+        let script = r#"
+        tell application "System Events"
+            set musicAppRunning to application process "Music" exists
+        end tell
+        
+        if musicAppRunning then
+            tell application "Music"
+                if it is running then
+                    if player state is playing then
+                        return "true"
+                    end if
+                end if
+            end tell
+        end if
+        
+        return "false"
+        "#;
+        
+        let output = match Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .output()
+            .await 
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    String::from_utf8_lossy(&output.stdout).to_string().trim().to_string() == "true"
+                } else {
+                    debug!("Error al verificar Apple Music: {:?}", output.stderr);
+                    false
+                }
+            },
+            Err(e) => {
+                error!("Error al ejecutar osascript para verificar Apple Music: {}", e);
+                false
+            }
+        };
+        
+        output
     }
 } 
