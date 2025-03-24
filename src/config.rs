@@ -1,37 +1,46 @@
-use crate::{cfg_unix, cfg_windows};
+#![deny(unused_must_use)]
+
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::OnceLock,
-};
+use std::fs::File;
+use std::io::{BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use tap::TapFallible;
 use tracing::warn;
 
-#[derive(Deserialize, Serialize, Debug, Default, Clone)]
-#[serde(default)]
-pub struct Config {
-    #[serde(default = "bool_true")]
-    #[cfg(windows)]
-    pub no_autostart: bool,
-    pub modules: ModuleConfig,
-    pub server: ServerConfig,
+macro_rules! cfg_unix {
+    ($($tokens:tt)*) => {
+        #[cfg(unix)]
+        $($tokens)*
+    };
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct ServerConfig {
-    #[serde(default, flatten)]
-    pub bind: BindConfig,
-    #[serde(default = "default_custom_theme_path")]
-    pub custom_theme_path: String,
-    #[serde(default = "default_custom_script_path")]
-    pub custom_script_path: String,
+macro_rules! cfg_windows {
+    ($($tokens:tt)*) => {
+        #[cfg(windows)]
+        $($tokens)*
+    };
 }
 
+macro_rules! cfg_macos {
+    ($($tokens:tt)*) => {
+        #[cfg(target_os = "macos")]
+        $($tokens)*
+    };
+}
+
+/// Configuración del servidor
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum BindConfig {
-    Single { port: u16 },
-    Multiple { bind: Vec<std::net::SocketAddr> },
+    /// Configuración sencilla para hacer bind en localhost:<port>
+    Single {
+        port: u16,
+    },
+    /// Bind en múltiples IPs
+    Multiple {
+        bind: Vec<(String, u16)>,
+    },
 }
 
 impl Default for BindConfig {
@@ -40,124 +49,105 @@ impl Default for BindConfig {
     }
 }
 
+/// Configuración del servidor web
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
+pub struct ServerConfig {
+    #[serde(flatten)]
+    pub bind: BindConfig,
+    pub custom_theme_path: String,
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             bind: BindConfig::default(),
-            custom_theme_path: default_custom_theme_path(),
-            custom_script_path: default_custom_script_path(),
+            custom_theme_path: "theme.css".to_owned(),
         }
     }
 }
 
-#[inline]
-fn default_custom_theme_path() -> String {
-    "theme.css".to_string()
-}
-
-#[inline]
-fn default_custom_script_path() -> String {
-    "user.js".to_string()
-}
-
-#[inline]
-fn bool_true() -> bool {
-    true
-}
-
-#[inline]
-fn bool_false() -> bool {
-    false
-}
-
-#[derive(Deserialize, Serialize, Debug, Default, Clone)]
-#[serde(default)]
-pub struct ModuleConfig {
-    #[serde(default)]
-    pub file: FileOutputConfig,
-    #[cfg(windows)]
-    #[cfg_attr(windows, serde(default))]
-    pub gsmtc: GsmtcConfig,
-
-    #[cfg(unix)]
-    #[cfg_attr(unix, serde(default))]
-    pub dbus: DbusConfig,
-}
-
+/// Configuración de salida a archivo
 #[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct FileOutputFormat {
+    #[serde(default = "std::string::String::new")]
+    pub when_playing: String,
+    #[serde(default = "std::string::String::new")]
+    pub when_paused: String,
+}
+
+impl Default for FileOutputFormat {
+    fn default() -> Self {
+        Self {
+            when_playing: "{title} - {artist}".to_owned(),
+            when_paused: "".to_owned(),
+        }
+    }
+}
+
+/// Configuración de la salida del archivo
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
 pub struct FileOutputConfig {
     #[serde(default = "bool_false")]
     pub enabled: bool,
-    #[serde(default = "default_file_path")]
-    pub path: PathBuf,
-    #[serde(default = "default_format")]
-    pub format: String,
-}
-
-fn default_file_path() -> PathBuf {
-    "current_song.txt".into()
-}
-
-fn default_format() -> String {
-    "{artist} - {title}".into()
+    pub path: String,
+    pub format: FileOutputFormat,
 }
 
 impl Default for FileOutputConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            path: default_file_path(),
-            format: default_format(),
+            path: "current_song.txt".to_owned(),
+            format: FileOutputFormat::default(),
         }
     }
 }
 
-cfg_windows! {
-    use std::collections::HashSet;
+/// Configuración de filtrado GSMTC
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
+pub struct FilterConfig {
+    pub mode: FilterMode,
+    pub items: Vec<String>,
+}
 
-    #[derive(Deserialize, Serialize, Debug, Clone)]
+impl Default for FilterConfig {
+    fn default() -> Self {
+        Self {
+            // Predeterminadamente, excluir Chrome, Edge y Firefox, ya que es probable
+            // que solo aparezcan videos de YouTube y no es fácil determinar los anuncios.
+            mode: FilterMode::Exclude,
+            items: vec![
+                "chrome.exe".to_owned(),
+                "msedge.exe".to_owned(),
+                "firefox.exe".to_owned(),
+            ],
+        }
+    }
+}
+
+/// Modo de filtrado
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub enum FilterMode {
+    /// No excluir ni incluir nada, aceptar todo
+    Disabled,
+    /// Lista de aplicaciones a incluir (rechazar el resto)
+    Include,
+    /// Lista de aplicaciones a excluir (aceptar el resto)
+    Exclude,
+}
+
+cfg_windows! {
+    /// Configuración para GSMTC (Windows)
+    #[derive(Deserialize, Serialize, Debug, Clone, Default)]
     #[serde(default)]
     pub struct GsmtcConfig {
         #[serde(default = "bool_true")]
         pub enabled: bool,
-        pub filter: GsmtcFilter,
-    }
-
-    impl Default for GsmtcConfig {
-        fn default() -> Self {
-            Self {
-                enabled: true,
-                filter: GsmtcFilter::default(),
-            }
-        }
-    }
-
-    #[derive(Deserialize, Serialize, Debug, Clone)]
-    #[serde(tag = "mode", content = "items")]
-    pub enum GsmtcFilter {
-        Disabled,
-        Include(HashSet<String>),
-        Exclude(HashSet<String>),
-    }
-
-    impl Default for GsmtcFilter {
-        fn default() -> Self {
-            let mut set = HashSet::new();
-            set.insert("firefox.exe".into());
-            set.insert("chrome.exe".into());
-            set.insert("msedge.exe".into());
-            Self::Exclude(set)
-        }
-    }
-
-    impl GsmtcFilter {
-        pub fn pass_filter(&self, source_model_id: &str) -> bool {
-            match self {
-                GsmtcFilter::Disabled => true,
-                GsmtcFilter::Include(include) => include.contains(source_model_id),
-                GsmtcFilter::Exclude(exclude) => !exclude.contains(source_model_id),
-            }
-        }
+        pub filter: FilterConfig,
     }
 }
 
@@ -178,6 +168,82 @@ cfg_unix! {
             }
         }
     }
+}
+
+cfg_macos! {
+    #[derive(Deserialize, Serialize, Debug, Clone)]
+    #[serde(default)]
+    pub struct MacOsConfig {
+        #[serde(default = "bool_true")]
+        pub enabled: bool,
+        pub players: Vec<String>,
+    }
+
+    impl Default for MacOsConfig {
+        fn default() -> Self {
+            Self {
+                enabled: true,
+                players: vec!["Spotify".to_owned(), "Music".to_owned()],
+            }
+        }
+    }
+}
+
+/// Configuración de los módulos
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
+pub struct ModuleConfig {
+    #[cfg(windows)]
+    pub gsmtc: GsmtcConfig,
+    #[cfg(unix)]
+    pub dbus: DbusConfig,
+    #[cfg(target_os = "macos")]
+    pub macos: MacOsConfig,
+    pub file: FileOutputConfig,
+}
+
+impl Default for ModuleConfig {
+    fn default() -> Self {
+        Self {
+            #[cfg(windows)]
+            gsmtc: GsmtcConfig::default(),
+            #[cfg(unix)]
+            dbus: DbusConfig::default(),
+            #[cfg(target_os = "macos")]
+            macos: MacOsConfig::default(),
+            file: FileOutputConfig::default(),
+        }
+    }
+}
+
+/// Configuración general
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
+pub struct Config {
+    #[serde(default = "bool_true")]
+    pub no_autostart: bool,
+
+    pub modules: ModuleConfig,
+    pub server: ServerConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            no_autostart: true,
+
+            modules: ModuleConfig::default(),
+            server: ServerConfig::default(),
+        }
+    }
+}
+
+fn bool_true() -> bool {
+    true
+}
+
+fn bool_false() -> bool {
+    false
 }
 
 static CURRENT_CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -202,95 +268,139 @@ lazy_static::lazy_static! {
                 }
                 Err(Some((loc, err))) => {
                     #[cfg(windows)]
-                    if !crate::win_setup::should_replace_invalid_config(&loc, &err) {
-                        continue; // try again
+                    if crate::win_setup::should_replace_invalid_config(&loc, &err) {
+                        #[allow(clippy::redundant_clone)]
+                        let conf = Config::default();
+                        save_config(&conf, &loc).ok();
+                        CURRENT_CONFIG_PATH.get_or_init(|| loc);
+                        break conf
+                    } else {
+                        continue;
                     }
+
                     #[cfg(not(windows))]
-                    let _ = err;
-
-                    warn!("Config at {} was invalid - replacing with default config", loc.display());
-                    if loc.exists() {
-                        fs::rename(&loc, loc.with_file_name("config.toml.old")).ok();
+                    {
+                        tracing::error!("Failed to load config at {} ({}); using defaults", loc.display(), err);
+                        let conf = Config::default();
+                        CURRENT_CONFIG_PATH.get_or_init(|| loc);
+                        break conf
                     }
-                    let conf = Config::default();
-
-                    save_config(&conf, &loc).ok();
-                    CURRENT_CONFIG_PATH.get_or_init(|| loc);
-
-                    break conf
                 }
             }
         }
     };
 }
 
-#[cfg(windows)]
 pub fn current_config_path() -> &'static Path {
-    CURRENT_CONFIG_PATH.get_or_init(|| default_config_paths()[0].clone())
+    CURRENT_CONFIG_PATH.get().expect("Path should've been initialized")
 }
 
-#[cfg(windows)]
 fn default_config_paths() -> [PathBuf; 2] {
-    [PathBuf::from("config.toml"), {
-        let mut appdata = PathBuf::from(
-            std::env::var_os("APPDATA").unwrap_or_else(|| "~\\AppData\\Roaming".into()),
-        );
-        appdata.push("CurrentSong2/config.toml");
-        appdata
-    }]
+    match default_config_dir() {
+        Some(mut p1) => {
+            p1.push("config.toml");
+            [p1, Path::new("config.toml").to_owned()]
+        }
+        None => [Path::new("config.toml").to_owned(), Path::new("config.toml").to_owned()],
+    }
 }
 
-#[cfg(unix)]
-fn default_config_paths() -> [PathBuf; 1] {
-    [{
-        let mut cfg_home =
-            PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").unwrap_or_else(|| {
-                let mut cfg_home = std::env::var_os("HOME").unwrap_or_else(|| "~".into());
-                cfg_home.push("/.config");
-                cfg_home
-            }));
-        cfg_home.push("CurrentSong2/config.toml");
-        cfg_home
-    }]
+fn default_config_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        match std::env::var_os("APPDATA") {
+            Some(app_data) => {
+                let mut p = PathBuf::from(app_data);
+                p.push("CurrentSong2");
+                std::fs::create_dir_all(&p).tap_err(|e| {
+                    warn!("Failed to create config directory {}: {}", p.display(), e);
+                }).ok()?;
+                Some(p)
+            }
+            None => {
+                warn!("'APPDATA' environment variable not set");
+                None
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        match dirs::config_dir() {
+            Some(mut p) => {
+                p.push("CurrentSong2");
+                std::fs::create_dir_all(&p).tap_err(|e| {
+                    warn!("Failed to create config directory {}: {}", p.display(), e);
+                }).ok()?;
+                Some(p)
+            }
+            None => {
+                warn!("Failed to determine config directory");
+                None
+            }
+        }
+    }
 }
 
-#[allow(clippy::result_large_err)]
-fn read_config() -> Result<(PathBuf, Config), Option<(PathBuf, toml::de::Error)>> {
-    let locations = default_config_paths();
-    let mut first_err = None;
-
-    for loc in &locations {
-        let Ok(file) = fs::read_to_string(loc) else {
-            continue;
-        };
-        match toml::from_str(&file) {
-            Ok(c) => return Ok((loc.clone(), c)),
-            Err(e) => {
-                warn!(error = %e, "Found config at {} but couldn't read it", loc.display());
-                if first_err.is_none() {
-                    first_err = Some((loc.clone(), e));
+fn read_config() -> Result<(PathBuf, Config), Option<(PathBuf, &'static str)>> {
+    let mut last_loc = None;
+    for path in default_config_paths() {
+        match File::open(&path) {
+            Ok(file) => {
+                let mut content = String::new();
+                if let Err(_) = std::io::Read::read_to_string(&mut BufReader::new(file), &mut content) {
+                    return Err(Some((path, "Couldn't read config file")));
                 }
+                
+                return match toml::from_str(&content) {
+                    Ok(config) => Ok((path, config)),
+                    Err(_) => Err(Some((path, "Couldn't parse config"))),
+                };
+            }
+            Err(err) => {
+                last_loc = if err.kind() == std::io::ErrorKind::NotFound {
+                    last_loc
+                } else {
+                    Some(path)
+                };
             }
         }
     }
-    warn!("Couldn't find a single config");
 
-    Err(first_err)
+    if let Some(loc) = last_loc {
+        Err(Some((loc, "File exists but couldn't be opened")))
+    } else {
+        Err(None)
+    }
 }
 
-pub fn save_config(config: &Config, path: &Path) -> anyhow::Result<()> {
-    // create the parent directory if it doesn't exist first
-    if let Some(dir) = path.parent() {
-        if !dir.exists() || !dir.is_dir() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                warn!(
-                    error = %e,
-                    "Failed to create directory containing the config ({})",
-                    dir.display()
-                );
-            }
+pub fn save_config(config: &Config, path: impl AsRef<Path>) -> std::io::Result<()> {
+    let output = toml::to_string_pretty(config).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to serialize config: {e}"),
+        )
+    })?;
+
+    let mut file = File::create(path)?;
+    file.write_all(output.as_bytes())?;
+
+    Ok(())
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
+pub struct MprisConfig {
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    pub destinations: Vec<String>,
+}
+
+impl Default for MprisConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            destinations: vec!["org.mpris.MediaPlayer2.*".to_owned()],
         }
     }
-
-    Ok(std::fs::write(path, toml::to_string(config)?)?)
 }

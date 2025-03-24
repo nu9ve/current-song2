@@ -63,6 +63,50 @@ function wrapMarqueeElements(
   };
 }
 
+// Función para cargar imágenes con retry
+function loadImageWithRetry(
+  imageEl: HTMLImageElement,
+  imageUrl: string, 
+  maxRetries = 3, 
+  retryDelay = 1000
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let retries = 0;
+    
+    const tryLoad = () => {
+      if (retries >= maxRetries) {
+        console.error(`No se pudo cargar la imagen después de ${maxRetries} intentos:`, imageUrl);
+        resolve(false);
+        return;
+      }
+      
+      const tempImage = new Image();
+      
+      tempImage.onload = () => {
+        // La imagen cargó correctamente, actualizar la imagen real
+        imageEl.src = imageUrl;
+        resolve(true);
+      };
+      
+      tempImage.onerror = () => {
+        retries++;
+        console.warn(`Error al cargar imagen (intento ${retries}/${maxRetries}):`, imageUrl);
+        
+        if (retries < maxRetries) {
+          setTimeout(tryLoad, retryDelay);
+        } else {
+          resolve(false);
+        }
+      };
+      
+      // Intentar cargar la imagen
+      tempImage.src = imageUrl;
+    };
+    
+    tryLoad();
+  });
+}
+
 (async function main() {
   const [container, imageContainer, imageEl, titleEl, subtitleEl, progressEl] = getElements<
     [
@@ -98,6 +142,13 @@ function wrapMarqueeElements(
 
   const userScript = startUserScript();
 
+  // Añadir evento de error para la imagen
+  imageEl.addEventListener('error', (e) => {
+    console.error('Error al cargar la imagen:', imageEl.src, e);
+    // Ocultar el contenedor de imagen si falla la carga
+    imageContainer.classList.add('hidden');
+  });
+
   const ws = new ReconnectingWebsocket<IncomingMessages<EventMap>, OutgoingMessages>(
     formatLocalUrl({
       path: '/api/ws/client',
@@ -117,10 +168,23 @@ function wrapMarqueeElements(
       animateOnChange(subtitleEl, state.subtitle, resetMarquee.reset, ...TextChangeAnimation);
     }
 
-    if (state.imageUrl) {
-      imageEl.src = state.imageUrl;
-      container.style.setProperty('--image-url', `url("${encodeURI(state.imageUrl)}")`);
+    if (state.imageUrl && typeof state.imageUrl === 'string') {
+      console.log('Cargando imagen:', state.imageUrl);
+      loadImageWithRetry(imageEl, state.imageUrl).then(success => {
+        if (success) {
+          console.log('Imagen cargada correctamente');
+          container.style.setProperty('--image-url', `url("${encodeURI(state.imageUrl!)}")`);
+          imageContainer.classList.remove('hidden');
+        } else {
+          console.warn('No se pudo cargar la imagen, ocultando el contenedor');
+          imageContainer.classList.add('hidden');
+        }
+      });
+    } else {
+      // Si no hay imagen, ocultar el contenedor
+      imageContainer.classList.add('hidden');
     }
+    
     container.style.setProperty('--title', JSON.stringify(data.title));
     container.style.setProperty('--artist', JSON.stringify(data.artist));
     if (data.album) {

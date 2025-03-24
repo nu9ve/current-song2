@@ -46,6 +46,18 @@ impl ImageStore {
             .and_then(|(_, i)| i.as_ref())
     }
 
+    pub fn get_latest(&self, id: usize) -> Option<(usize, &Image)> {
+        self.images
+            .get(&id)
+            .and_then(|(epoch, img)| img.as_ref().map(|i| (*epoch, i)))
+    }
+
+    pub fn get_size(&self, id: usize) -> Option<usize> {
+        self.images
+            .get(&id)
+            .and_then(|(_, img)| img.as_ref().map(|i| i.data.len()))
+    }
+
     pub fn store(&mut self, slot: usize, content_type: String, data: Vec<u8>) -> usize {
         if let Some(img) = self.images.get_mut(&slot) {
             let epoch = img.0.overflowing_add(1).0;

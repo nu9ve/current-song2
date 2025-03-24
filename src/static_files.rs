@@ -29,7 +29,7 @@ pub async fn theme_css() -> io::Result<NamedFile> {
 
 #[get("user.js")]
 pub async fn user_js() -> io::Result<NamedFile> {
-    NamedFile::open_async(&CONFIG.server.custom_script_path)
+    NamedFile::open_async("user.js")
         .await
         .map(|file| file.use_etag(false).use_last_modified(false))
 }

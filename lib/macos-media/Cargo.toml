@@ -1,0 +1,24 @@
+[package]
+name = "macos-media"
+version = "0.1.0"
+edition = "2021"
+description = "Un wrapper para obtener información de reproductores de medios en macOS mediante AppleScript"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Nerixyz/current-song2"
+keywords = ["macos", "spotify", "music", "applescript"]
+categories = ["multimedia"]
+readme = "README.md"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+tap = "1"
+thiserror = "2"
+tokio = { version = "1.44", features = ["sync", "rt", "macros", "process", "time"] }
+tracing = "0.1"
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.44", features = ["sync", "macros", "rt-multi-thread", "time"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] } 

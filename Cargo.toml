@@ -10,7 +10,7 @@ repository = "https://github.com/Nerixyz/current-song2"
 categories = ["multimedia"]                               # TODO: find something more fitting
 
 [workspace]
-members = [".", "lib/win-gsmtc", "lib/win-wrapper", "lib/mpris-dbus"]
+members = [".", "lib/win-gsmtc", "lib/win-wrapper", "lib/mpris-dbus", "lib/macos-media"]
 
 [features]
 # When enabled, the overlay will be bundled into the executable.
@@ -55,6 +55,8 @@ tracing-appender = "0.2"
 url = "2.5.4"
 fast-glob = "0.4.5"
 
+dirs = "5.0"
+
 [target.'cfg(windows)'.dependencies]
 win-gsmtc = { path = "lib/win-gsmtc" }
 win-wrapper = { path = "lib/win-wrapper" }
@@ -64,6 +66,9 @@ win-msgbox = "0.2"
 [target.'cfg(unix)'.dependencies]
 mpris-dbus = { path = "lib/mpris-dbus" }
 zbus_names = "4.2.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+macos-media = { path = "lib/macos-media" }
 
 [build-dependencies]
 actix-web-static-files = "4.0"

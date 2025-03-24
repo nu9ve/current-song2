@@ -48,8 +48,9 @@ fn init_common_actors(
 ) {
     if modules.file.enabled {
         let event_rx = event_rx.clone();
+        let format = modules.file.format.when_playing.clone();
         tokio::spawn(async move {
-            output_to_file(&modules.file.path, &modules.file.format, event_rx).await;
+            output_to_file(&modules.file.path, format, event_rx).await;
         });
     }
 }
@@ -67,7 +68,7 @@ async fn init_windows_actors(
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 async fn init_unix_actors(
     modules: &'static ModuleConfig,
     manager: Addr<Manager>,
@@ -77,6 +78,24 @@ async fn init_unix_actors(
         workers::dbus::start_spawning(manager, image_store)
             .await
             .unwrap();
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn init_macos_actors(
+    modules: &'static ModuleConfig,
+    manager: Addr<Manager>,
+    image_store: Arc<RwLock<ImageStore>>,
+) {
+    if modules.macos.enabled {
+        let module_id = manager.send(actors::manager::CreateModule { priority: 0 }).await.unwrap();
+        
+        workers::macos::start_spawning(
+            modules.macos.clone(),
+            image_store,
+            manager,
+            module_id,
+        ).await;
     }
 }
 
@@ -91,8 +110,11 @@ async fn async_main() -> std::io::Result<()> {
     #[cfg(windows)]
     init_windows_actors(&CONFIG.modules, manager.clone(), image_store.clone()).await;
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     init_unix_actors(&CONFIG.modules, manager.clone(), image_store.clone()).await;
+
+    #[cfg(target_os = "macos")]
+    init_macos_actors(&CONFIG.modules, manager.clone(), image_store.clone()).await;
 
     let image_store: web::Data<_> = image_store.into();
     let manager = web::Data::new(manager);
@@ -116,7 +138,25 @@ async fn async_main() -> std::io::Result<()> {
         }
         config::BindConfig::Multiple { bind } => {
             tracing::info!("Binding on {bind:?}");
-            srv.bind(&bind[..])
+            let socket_addrs: Vec<std::net::SocketAddr> = bind
+                .iter()
+                .filter_map(|(host, port)| {
+                    let addr = format!("{}:{}", host, port).parse().ok();
+                    if addr.is_none() {
+                        tracing::warn!("Failed to parse socket address: {}:{}", host, port);
+                    }
+                    addr
+                })
+                .collect();
+            
+            if socket_addrs.is_empty() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "No valid socket addresses provided",
+                ));
+            }
+            
+            srv.bind(&socket_addrs[..])
         }
     }?
     .run()
